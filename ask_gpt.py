@@ -1,8 +1,12 @@
 import os
 from openai import OpenAI
-import numpy as np
 import sys
+from azure.cosmos import CosmosClient
 from termcolor import colored
+from dotenv import load_dotenv
+import json
+# Load environment variables from .env file
+load_dotenv()
 
 openai_api_key = os.getenv("OPENAI_API_KEY")
 if not openai_api_key:
@@ -14,10 +18,18 @@ EMBEDDING_MODEL = "text-embedding-ada-002"
 
 client = OpenAI(api_key=openai_api_key)
 
+# Azure Cosmos DB configuration
+cosmos_url = os.getenv("COSMOS_URL")
+cosmos_key = os.getenv("COSMOS_KEY")
+cosmos_database_name = 'diary_db'
+cosmos_container_name = 'diary_embeddings'
+
+cosmos_client = CosmosClient(cosmos_url, cosmos_key)
+cosmos_container = cosmos_client.get_database_client(cosmos_database_name).get_container_client(cosmos_container_name)
 
 def ask_gpt(question, context=None, model="gpt-4"):
     if context:
-        system_prompt = f"You are an AI assistant. The following is a relevant diary entry: {context}\nPlease answer the user's question based on the provided diary entry."
+        system_prompt = f"You are an AI assistant. The following are relevant diary entries: {context}\nPlease answer the user's question based on the provided diary entries."
     else:
         system_prompt = "You are an AI assistant. Please answer the user's question."
 
@@ -31,8 +43,8 @@ def ask_gpt(question, context=None, model="gpt-4"):
             {"role": "user", "content": question},
         ],
     )
-    return response.choices[0].message.content
 
+    return response.choices[0].message.content
 
 def generate_openai_embeddings(input_text):
     print(
@@ -41,42 +53,31 @@ def generate_openai_embeddings(input_text):
     response = client.embeddings.create(input=input_text, model=EMBEDDING_MODEL)
     return response.data[0].embedding
 
+def find_most_relevant_entry(query_embedded, top_n=2):
+    query = """
+    SELECT TOP @top_n c.id, c.content, VectorDistance(c.embeddings, @query_embedding) AS SimilarityScore
+    FROM c
+    """
+    parameters = [
+        {"name": "@top_n", "value": top_n},
+        {"name": "@query_embedding", "value": query_embedded},
+    ]
 
-def load_embeddings(directory_path):
-    print(colored(f"\nLoading embeddings from directory: {directory_path}", "green"))
-    embeddings_dict = {}
-    for filename in os.listdir(directory_path):
-        filepath = os.path.join(directory_path, filename)
-        with open(filepath, "r") as file:
-            embeddings = [float(line.strip()) for line in file]
-            embeddings_dict[filename] = embeddings
-    return embeddings_dict
+    result = list(cosmos_container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True
+    ))
 
+    print(f"Most relevant entries with top_n {top_n}:")
 
-def find_most_relevant_entry(query_embedded, embeddings_dict):
-    max_similarity = -1
-    most_relevant_entry = None
-    print(
-        colored(
-            "\nComparing query embeddings with stored embeddings to find the most relevant diary entry...",
-            "green",
-        )
-    )
-    for filename, embeddings in embeddings_dict.items():
-        similarity = np.dot(query_embedded, embeddings) / (
-            np.linalg.norm(query_embedded) * np.linalg.norm(embeddings)
-        )
-        print(colored(f"\nComparing with {filename}: {similarity:.4f}", "yellow"))
-        if similarity > max_similarity:
-            max_similarity = similarity
-            most_relevant_entry = filename
-        print(
-            colored(
-                f"New most relevant entry found: {filename} with similarity {similarity:.4f}",
-                "magenta",
-            )
-        )
-    return most_relevant_entry
+    print(json.dumps(result, indent=4))
+
+    if not result:
+        return None
+    
+    result_text = "\n".join(entry['content'] for entry in result)
+    return result_text
 
 
 if __name__ == "__main__":
@@ -97,22 +98,11 @@ if __name__ == "__main__":
     if use_embeddings:
         query_embedding = generate_openai_embeddings(question)
 
-        embeddings_directory = "embeddings"
-        embeddings_dict = load_embeddings(embeddings_directory)
+        print(colored(f"\nQuery embeddings generated.", "green"))
+        relevant_context = find_most_relevant_entry(query_embedding)
 
-        most_relevant_entry = find_most_relevant_entry(query_embedding, embeddings_dict)
-
-        if most_relevant_entry:
-            diary_directory = "data/diary"
-            with open(
-                os.path.join(
-                    diary_directory, most_relevant_entry.replace(".embeddings", "")
-                ),
-                "r",
-            ) as file:
-                relevant_context = file.read()
-
-            print(colored(f"\nMost relevant diary entry content:", "blue"))
+        if relevant_context:
+            print(colored(f"\nMost relevant diary entries content:", "blue"))
             print(colored(relevant_context, "cyan"))
 
             gpt_response = ask_gpt(question, relevant_context)

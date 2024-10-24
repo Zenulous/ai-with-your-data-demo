@@ -7,6 +7,8 @@ This demo belongs to an explainer [YouTube video](https://youtu.be/Pji4-9DKBUE)
 1. **Clone the repository**
 
 2. **Create a virtual environment (optional but recommended)**
+   This project assumes you use Python 3.10.
+   
     ```bash
     python -m venv env
     source env/bin/activate  # On Windows use `env\Scripts\activate`
