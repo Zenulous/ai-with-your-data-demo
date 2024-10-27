@@ -19,10 +19,9 @@ This demo belongs to an explainer [YouTube video](https://youtu.be/Pji4-9DKBUE)
     pip install -r requirements.txt
     ```
 
-4. **Set OpenAI key**
-    ```bash
-    export OPENAI_API_KEY=your_value
-    ```
+4. **Set environment variables**
+    Create a .env file with the environment variables as denoted in .env.example
+    In this example we use Azure CosmosDB
 
 5. **Run the script**
     ```bash
